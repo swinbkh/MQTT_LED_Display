@@ -13,3 +13,8 @@ OLED:
 * SDA Pin D2
 
 USB Type A to bare wires (for permanent power)
+
+
+Casing:
+3D print, with the face down. Requires no support. Infill does not matter, it is a thin walled box, and will print solid.
+![Casing](https://github.com/swinbkh/MQTT_LED_Display/blob/main/Hardware/Casing.png)
