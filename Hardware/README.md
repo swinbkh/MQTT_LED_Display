@@ -9,6 +9,7 @@ LEDs:
 
 OLED:
 * SSD1306 128x64 White / Blue (Not dual colour)
-* 
+* SCL Pin D1
+* SDA Pin D2
 
 USB Type A to bare wires (for permanent power)
