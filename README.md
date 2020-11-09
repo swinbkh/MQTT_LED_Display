@@ -7,7 +7,7 @@ This little device features a string of 5x WS2812B LEDs, and a 128x64 OLED for m
 * 5 rotating pages displaying detailed information
 * 1x progress bar page for scalar information
 * customisable text, subtext and icons per page
-* Support for ~80% of the material design icon library
+* Support for ~80% of the [material design icon library](https://material.io/resources/icons)
 * Support for individual LED control (HSV Colour, and flashing LED functionality)
 
 ## Potential Usage Cases:
