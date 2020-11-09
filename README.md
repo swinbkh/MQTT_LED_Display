@@ -1,4 +1,4 @@
-# MQTT_LED_Display
+# MQTT LED Display
 
 A quick-glance information panel, controlled via MQTT.
 This little device features a string of 5x WS2812B LEDs, and a 128x64 OLED for more detailed information, and can be used as a convenient little tool around the house. 
