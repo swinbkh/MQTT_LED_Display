@@ -4,6 +4,7 @@
 * Any element can be updated independantly!
 * Page 1 Subtext can only be a number, as this is always represented as a progress bar
 * Newline characters are supported in the page title, but not subtext, as this automatically wraps
+* Change the first few lines to your WiFi SSID, Password and MQTT server. 
 
 # Interacting with the display
 
