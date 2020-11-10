@@ -31,4 +31,3 @@ Built from the examples provided by ThingPulse: [Library](https://github.com/Thi
 ## License
 Copyright 2020 Kyle Swinburne
 
-The hardware portion of this project is licensed under the TAPR Open Hardware License (www.tapr.org/OHL). The "license" folder within this repository contains a copy of this license in plain text format.
