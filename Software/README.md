@@ -18,8 +18,8 @@ Any element can be updated independantly! This means if you only wish to change 
 ```
 Newlines are not required, so long as it is valid JSON, it should be parsed correctly. 
 
-Similarly for LEDs, they can be independantly controlled. The topic for LED updates is `cmnd/LED_Display/Colours`
-<- That is the UK English spelling of colour!!!
+Similarly for LEDs, they can be independantly controlled. The topic for LED updates is `cmnd/LED_Display/Hue`
+
 ```
 {"LED1":{
     "H":120,
@@ -95,7 +95,7 @@ Here, the Saturation values and Brightness values have not been passed through, 
 ```
 
 
-## MQTT RGB LED Topic: cmnd/LED_Display/Colours
+## MQTT RGB LED Topic: cmnd/LED_Display/Hue
 ```
 {"LED1":{
     "H":0,
