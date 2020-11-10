@@ -45,7 +45,7 @@ Similarly for LEDs, they can be independantly controlled. The topic for LED upda
 ```
 Here, the Saturation values and Brightness values have not been passed through, so they will remain at their previous setting
 
-#Supported data entry types
+# Supported data entry types
 * OLED Display
   * Must include a page (String)
   * Title (String)
