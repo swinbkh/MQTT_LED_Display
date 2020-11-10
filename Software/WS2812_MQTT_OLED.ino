@@ -961,7 +961,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print(topic);
   Serial.println("]");
 
-  if (strcmp(topic, "cmnd/LED_Display/Colours") == 0)
+  if (strcmp(topic, "cmnd/LED_Display/Hue") == 0)
   {
     Serial.println("Updating Colours");
     StaticJsonDocument<512> root;
@@ -1228,7 +1228,7 @@ void reconnect() {
   if (client.connect(clientId.c_str(), mqtt_user, mqtt_password, will_topic, will_QoS, will_retain, will_message)) {
     Serial.println("connected");
     client.publish(will_topic, lwt_msg, will_retain);
-    client.subscribe("cmnd/LED_Display/Colours");
+    client.subscribe("cmnd/LED_Display/Hue");
     client.subscribe("cmnd/LED_Display/Display");
   } else {
     Serial.print("failed, rc=");
