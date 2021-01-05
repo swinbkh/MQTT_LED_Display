@@ -1,9 +1,6 @@
-#define will_topic "stat/LED_Display_1/Status" //Where the board will post Online/Offline. Useful as a trigger to re-send data after disconnected
-#define OTAHostname "LED Display 1"
-
 const char* WIFI_SSID = "PUT_YOUR_SSID_HERE";
-const char* WIFI_PWD = "AND_YOUR_PASSWORD_HERE";
-#define mqtt_server     "192.168.1.2" //CHANGE TO YOUR MQTT IP
+const char* WIFI_PWD = "PUT_YOUR_PASSWORD_HERE";
+#define mqtt_server     "192.168.1.12" //CHANGE TO YOUR MQTT IP
 
 #include "ArduinoJson.h"
 #include <ESP8266WiFi.h>
@@ -965,7 +962,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print(topic);
   Serial.println("]");
 
-  if (strcmp(topic, "cmnd/LED_Display/Hue") == 0)
+  if (strcmp(topic,("cmnd/LED_Display_" + getMacAddress() + "/Colours").c_str()) == 0)
   {
     Serial.println("Updating Colours");
     StaticJsonDocument<512> root;
@@ -1107,7 +1104,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     Serial.println("LED4: " + String(LED4_H) + "\t" + String(LED4_S) + "\t" + String(LED4_V) + "\tFLASH: " + String(FlashArray[3]));
     Serial.println("LED5: " + String(LED5_H) + "\t" + String(LED5_S) + "\t" + String(LED5_V) + "\tFLASH: " + String(FlashArray[4]));
   }
-  if (strcmp(topic, "cmnd/LED_Display/Display") == 0)
+  if (strcmp(topic, ("cmnd/LED_Display_" + getMacAddress() + "/Display").c_str()) == 0)
   {
     Serial.println("Updating Display");
     DynamicJsonDocument doc(512);
@@ -1229,11 +1226,11 @@ void reconnect() {
   String clientId = "ESP8266Client-";
   clientId += String(random(0xffff), HEX);
   // Attempt to connect
-  if (client.connect(clientId.c_str(), mqtt_user, mqtt_password, will_topic, will_QoS, will_retain, will_message)) {
+  if (client.connect(clientId.c_str(), mqtt_user, mqtt_password, ("stat/LED_Display_" + getMacAddress() + "/Status").c_str(), will_QoS, will_retain, will_message)) {
     Serial.println("connected");
-    client.publish(will_topic, lwt_msg, will_retain);
-    client.subscribe("cmnd/LED_Display/Hue");
-    client.subscribe("cmnd/LED_Display/Display");
+    client.publish(("stat/LED_Display_" + getMacAddress() + "/Status").c_str(), lwt_msg, will_retain);
+    client.subscribe(("cmnd/LED_Display_" + getMacAddress() + "/Colours").c_str());
+    client.subscribe(("cmnd/LED_Display_" + getMacAddress() + "/Display").c_str());
   } else {
     Serial.print("failed, rc=");
     Serial.print(client.state());
@@ -1265,11 +1262,11 @@ int FindIconIndex(String IconName) {
 
 void drawScreen(OLEDDisplay * display, int x, int y, String TitleText, String SubText, String IconType) {
   display->setTextAlignment(TEXT_ALIGN_LEFT);
-  display->setFont(ArialMT_Plain_10);
-  display->drawString(x + 55, y + 5, TitleText);
+  display->setFont(ArialMT_Plain_24);
+  display->drawString(x + 55, y, TitleText);
   //display->setFont(Crushed_Plain_36);
-  display->drawStringMaxWidth(x + 55, y + 20, 70, SubText);
-  //display->drawString(x + 60, y + 15, SubText);
+  //display->drawStringMaxWidth(x + 55, y + 20, 70, SubText);
+  display->drawString(x + 55, y + 25, SubText);
   int IconInt = FindIconIndex(IconType);
   //Serial.print("Icon Index: ");
   //Serial.println(IconInt);
@@ -4810,6 +4807,28 @@ void drawScreen(OLEDDisplay * display, int x, int y, String TitleText, String Su
   }
 }
 
+String getMacAddress() {
+  byte mac[6];
+  byte mac_reversed[6];
+  WiFi.macAddress(mac);
+
+  for (int idx = 0; idx < 6; idx++) {
+    mac_reversed[idx] = mac[5 - idx];
+  }
+
+  String cMac = "";
+  for (int i = 0; i < 6; ++i) {
+    if (mac_reversed[i] < 0x10) {
+      cMac += "0";
+    }
+    cMac += String(mac_reversed[i], HEX);
+    if (i < 5)
+      cMac += ""; // put : or - if you want byte delimiters
+  }
+  cMac.toUpperCase();
+  return cMac;
+
+}
 
 void drawFrame1(OLEDDisplay * display, OLEDDisplayUiState * state, int16_t x, int16_t y) {
   ui.disableAllIndicators();
@@ -4844,13 +4863,12 @@ void setup() {
   FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);
   LEDS.setBrightness(255);
 
-
   // initialize dispaly
   display.init();
   display.clear();
   display.display();
   //display.flipScreenVertically();
-  display.setFont(ArialMT_Plain_10);
+  display.setFont(ArialMT_Plain_16);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setContrast(255);
 
@@ -4878,7 +4896,7 @@ void setup() {
     delay(250);
     Serial.print(".");
     display.clear();
-    display.drawString(64, 10, "Connecting to WiFi");
+    display.drawString(64, 10, "Connecting\nto WiFi");
     display.drawXbm(46, 30, 8, 8, counter % 3 == 0 ? activeSymbol : inactiveSymbol);
     display.drawXbm(60, 30, 8, 8, counter % 3 == 1 ? activeSymbol : inactiveSymbol);
     display.drawXbm(74, 30, 8, 8, counter % 3 == 2 ? activeSymbol : inactiveSymbol);
@@ -4914,8 +4932,8 @@ void setup() {
   ui.setFrames(frames, numberOfFrames);
   ui.init();
   Serial.println("");
-  
-  ArduinoOTA.setHostname(OTAHostname);
+
+  ArduinoOTA.setHostname(("LED_Display_" + getMacAddress()).c_str());
   ArduinoOTA.onStart([]() {
     String type;
     if (ArduinoOTA.getCommand() == U_FLASH) {
