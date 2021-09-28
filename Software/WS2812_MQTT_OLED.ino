@@ -1,51 +1,114 @@
-const char* WIFI_SSID = "PUT_YOUR_SSID_HERE";
-const char* WIFI_PWD = "PUT_YOUR_PASSWORD_HERE";
-#define mqtt_server     "192.168.1.12" //CHANGE TO YOUR MQTT IP
+/*
+  IOT Smart Display
 
+  A smart display solution, acting as a bridge between home automation, and the real world!
+
+  Visualise your data!
+
+  A project, built specifically for the ESP8266/ESP32 which is designed to act as
+  a quick-glance information portal into a home-automation setup.
+
+  Supports direct control via MQTT, and can be addressed as a group or individually.
+
+  See the project page for more on how to interface, update and setup the board to your
+  home automation setup: http://https://github.com/swinbkh/MQTT_LED_Display
+
+  Last modified 17 July 2021
+  by Kyle Swinburne
+
+  This code is in the public domain, you can find more information on this project here:
+  http://https://github.com/swinbkh/MQTT_LED_Display
+*/
+
+//----------------USER CHANGEABLE SETTINGS--------------------
+
+const char* WIFI_SSID =       "PUT_YOUR_SSID_HERE";     //CHANGE TO YOUR WIFI SSID
+const char* WIFI_PASSWORD =   "PUT_YOUR_PASSWORD_HERE"; //CHANGE TO YOUR WIFI PASSWORD
+#define MQTT_HOST             "192.168.1.2"  			//CHANGE TO YOUR MQTT IP
+#define MQTT_PORT             1883           			//CHANGE TO YOUR MQTT PORT
+
+#define DEBUG                         					//UNCOMMENT IF YOU WISH TO SEE SERIAL DATA IN THE TERMINAL WINDOW 
+//#define UPDATE
+//------------END OF USER CHANGEABLE SETTINGS----------------
+
+#ifdef DEBUG    //If user has defined debug settings
+#define DEBUG_PRINT(x)  Serial.print (x)  //define a custom function called DEBUG_PRINT, to output debug messages to the terminal
+#define DEBUG_PRINTF(x,y)  Serial.printf (x,y)
+#define DEBUG_PRINTLN(x)  Serial.println (x)
+#else
+#define DEBUG_PRINT(x)    //If Debug settings are disabled, do not print outputs to serial monitor. Blank function. 
+#define DEBUG_PRINTF(x)
+#define DEBUG_PRINTLN(x)
+#endif
+
+#ifdef UPDATE    //If user has defined debug settings
+#define UPDATE_PRINT(x)  Serial.print (x)  //define a custom function called DEBUG_PRINT, to output debug messages to the terminal
+#define UPDATE_PRINTF(x,y)  Serial.printf (x,y)
+#define UPDATE_PRINTLN(x)  Serial.println (x)
+#else
+#define UPDATE_PRINT(x)    //If Debug settings are disabled, do not print outputs to serial monitor. Blank function. 
+#define UPDATE_PRINTF(x)
+#define UPDATE_PRINTLN(x)
+#endif
+
+#define FASTLED_ESP8266_RAW_PIN_ORDER //Use raw pin order, as using a bare ESP-12F chip
+
+// Required Libraries
+#include <FastLED.h>
 #include "ArduinoJson.h"
 #include <ESP8266WiFi.h>
 #include <ESP8266mDNS.h>
 #include <WiFiUdp.h>
 #include <ArduinoOTA.h>
-#include <PubSubClient.h>
-
 #include <SSD1306Wire.h>
 #include <OLEDDisplayUi.h>
 #include <Wire.h>
+#include <Ticker.h>
+#include <AsyncMqttClient.h>
+
+AsyncMqttClient mqttClient;
+Ticker mqttReconnectTimer;
+
+WiFiEventHandler wifiConnectHandler;
+WiFiEventHandler wifiDisconnectHandler;
+Ticker wifiReconnectTimer;
+
+//String LWT_Topic = ("stat/LED_Display_" + getMacAddress() + "/Status"); //Required to be non-const as will be populated by mac details.
+const char* LWT_Message = "Offline";
+
+//Required icon datafile
 #include "icons.h"
 
-#define FASTLED_ESP8266_RAW_PIN_ORDER
-#include <FastLED.h>
+//FastLED parameters
+#define NUM_LEDS 21           //Number of WS2812 LEDs on the board (Including stat LED)
+#define DATA_PIN 2            //String of 20 LEDs are connected to GPIO 2
+#define STAT_DATA_PIN 13      //Stat LED is connected to GPIO 13
+#define FRAMES_PER_SECOND 100 //Set update speed
+#define BRIGHTNESS 100        //Set initial brightness, 0-255. (Later overrided by user input)
+CRGB leds[NUM_LEDS];          //Setup LED object
+CRGBPalette16 LEDPalette;     //Setup blank palette object
 
-#define NUM_LEDS 5
-#define DATA_PIN 14 //D5
-CRGB leds[NUM_LEDS];
+//Button parameters
+#define Key1 14   //Left Key
+#define Key2 12   //Right Key
+
+//LED Parameters
+int FLASH_COL = LOW;                  // Is the flash state currently on?
+unsigned long previousMillis = 0;     // will store last time LED was updated
+const long flash_interval = 1000;     // interval at which to blink (milliseconds)
+
+float STAT_LED_H = 96,  L_LED_H = 0,   M_LED_H = 60,  R_LED_H = 96;
+float STAT_LED_S = 255, L_LED_S = 255, M_LED_S = 255, R_LED_S = 255;
+float STAT_LED_V = 50,  L_LED_V = 50,  M_LED_V = 50,  R_LED_V = 50;
+
+bool FlashArray[NUM_LEDS] = {false};
+bool LED_OFF_Array[NUM_LEDS] = {false};
+
+int LINEAR_LED_VAL = 100;
+bool LINEAR_LED_DIR = 0; //0, LEFT>RIGHT  |  1, RIGHT>LEFT
 
 
-WiFiClient espClient;
-PubSubClient client(espClient);
-
-#define mqtt_user       "MQTT-login"
-#define mqtt_password   "MQTT-password"
-#define will_message    "Offline"
-#define lwt_msg         "Online"
-#define will_QoS        0
-#define will_retain     true
-
-unsigned long lastMsg = 0;
-#define MSG_BUFFER_SIZE  (50)
-char msg[MSG_BUFFER_SIZE];
-
-int flash_on = LOW;             // Is the flash state currently on?
-unsigned long previousMillis = 0;        // will store last time LED was updated
-const long flash_interval = 1000;           // interval at which to blink (milliseconds)
-
-float LED1_H = 0, LED2_H = 00, LED3_H = 60, LED4_H = 96, LED5_H = 96;
-float LED1_S = 255, LED2_S = 255, LED3_S = 255, LED4_S = 255, LED5_S = 255;
-float LED1_V = 50, LED2_V = 50, LED3_V = 50, LED4_V = 50, LED5_V = 50;
-//bool LED1_FLASH = false, LED2_FLASH = false, LED3_FLASH = false, LED4_FLASH = false, LED5_FLASH = false;
-bool FlashArray[5] = {false, false, false, false, false};
-
+//OLED Parameters
 SSD1306Wire  display(0x3c, 4, 5);
 OLEDDisplayUi ui     ( &display );
 
@@ -955,292 +1018,6 @@ String IconArray[] = {
   "ZOOM_OUT_MAP"
 };
 
-
-void callback(char* topic, byte* payload, unsigned int length) {
-
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.println("]");
-
-  if (strcmp(topic,("cmnd/LED_Display_" + getMacAddress() + "/Colours").c_str()) == 0)
-  {
-    Serial.println("Updating Colours");
-    StaticJsonDocument<512> root;
-    deserializeJson(root, payload, length);
-
-    JsonObject LED1 = root["LED1"];
-    if (LED1)
-    {
-      if (!root["LED1"]["H"].isNull())
-      {
-        LED1_H = map(LED1["H"], 0, 360, 0, 255); // Hue
-      }
-      if (!root["LED1"]["S"].isNull())
-      {
-        LED1_S = map(LED1["S"], 0, 100, 0, 255); // Sat
-      }
-      if (!root["LED1"]["V"].isNull())
-      {
-        LED1_V = map(LED1["V"], 0, 100, 0, 255); // Val
-      }
-      if (!root["LED1"]["FLASH"].isNull())
-      {
-        if (root["LED1"]["FLASH"].as<int>() == 1) {
-          FlashArray[4] = true;
-        }
-        else if (root["LED1"]["FLASH"].as<int>() == 0) {
-          FlashArray[4] = false;
-        }
-      }
-    }
-
-    JsonObject LED2 = root["LED2"];
-    if (LED2)
-    {
-      if (!root["LED2"]["H"].isNull())
-      {
-        LED2_H = map(LED2["H"], 0, 360, 0, 255); // Hue
-      }
-      if (!root["LED2"]["S"].isNull())
-      {
-        LED2_S = map(LED2["S"], 0, 100, 0, 255); // Sat
-      }
-      if (!root["LED2"]["V"].isNull())
-      {
-        LED2_V = map(LED2["V"], 0, 100, 0, 255); // Val
-      }
-      if (!root["LED2"]["FLASH"].isNull())
-      {
-        if (root["LED2"]["FLASH"].as<int>() == 1) {
-          FlashArray[3] = true;
-        }
-        else if (root["LED2"]["FLASH"].as<int>() == 0) {
-          FlashArray[3] = false;
-        }
-      }
-    }
-
-    JsonObject LED3 = root["LED3"];
-    if (LED3)
-    {
-      if (!root["LED3"]["H"].isNull())
-      {
-        LED3_H = map(LED3["H"], 0, 360, 0, 255); // Hue
-      }
-      if (!root["LED3"]["S"].isNull())
-      {
-        LED3_S = map(LED3["S"], 0, 100, 0, 255); // Sat
-      }
-      if (!root["LED3"]["V"].isNull())
-      {
-        LED3_V = map(LED3["V"], 0, 100, 0, 255); // Val
-      }
-      if (!root["LED3"]["FLASH"].isNull())
-      {
-        if (root["LED3"]["FLASH"].as<int>() == 1) {
-          FlashArray[2] = true;
-        }
-        else if (root["LED3"]["FLASH"].as<int>() == 0) {
-          FlashArray[2] = false;
-        }
-      }
-    }
-
-    JsonObject LED4 = root["LED4"];
-    if (LED4)
-    {
-      if (!root["LED4"]["H"].isNull())
-      {
-        LED4_H = map(LED4["H"], 0, 360, 0, 255); // Hue
-      }
-      if (!root["LED4"]["S"].isNull())
-      {
-        LED4_S = map(LED4["S"], 0, 100, 0, 255); // Sat
-      }
-      if (!root["LED4"]["V"].isNull())
-      {
-        LED4_V = map(LED4["V"], 0, 100, 0, 255); // Val
-      }
-      if (!root["LED4"]["FLASH"].isNull())
-      {
-        if (root["LED4"]["FLASH"].as<int>() == 1) {
-          FlashArray[1] = true;
-        }
-        else if (root["LED4"]["FLASH"].as<int>() == 0) {
-          FlashArray[1] = false;
-        }
-      }
-    }
-
-    JsonObject LED5 = root["LED5"];
-    if (LED5)
-    {
-      if (!root["LED5"]["H"].isNull())
-      {
-        LED5_H = map(LED5["H"], 0, 360, 0, 255); // Hue
-      }
-      if (!root["LED5"]["S"].isNull())
-      {
-        LED5_S = map(LED5["S"], 0, 100, 0, 255); // Sat
-      }
-      if (!root["LED5"]["V"].isNull())
-      {
-        LED5_V = map(LED5["V"], 0, 100, 0, 255); // Val
-      }
-      if (!root["LED5"]["FLASH"].isNull())
-      {
-        if (root["LED5"]["FLASH"].as<int>() == 1) {
-          FlashArray[0] = true;
-        }
-        else if (root["LED5"]["FLASH"].as<int>() == 0) {
-          FlashArray[0] = false;
-        }
-      }
-    }
-
-    Serial.println("LED1: " + String(LED1_H) + "\t" + String(LED1_S) + "\t" + String(LED1_V) + "\tFLASH: " + String(FlashArray[0]));
-    Serial.println("LED2: " + String(LED2_H) + "\t" + String(LED2_S) + "\t" + String(LED2_V) + "\tFLASH: " + String(FlashArray[1]));
-    Serial.println("LED3: " + String(LED3_H) + "\t" + String(LED3_S) + "\t" + String(LED3_V) + "\tFLASH: " + String(FlashArray[2]));
-    Serial.println("LED4: " + String(LED4_H) + "\t" + String(LED4_S) + "\t" + String(LED4_V) + "\tFLASH: " + String(FlashArray[3]));
-    Serial.println("LED5: " + String(LED5_H) + "\t" + String(LED5_S) + "\t" + String(LED5_V) + "\tFLASH: " + String(FlashArray[4]));
-  }
-  if (strcmp(topic, ("cmnd/LED_Display_" + getMacAddress() + "/Display").c_str()) == 0)
-  {
-    Serial.println("Updating Display");
-    DynamicJsonDocument doc(512);
-    deserializeJson(doc, payload, length);
-
-    JsonObject PAGE1 = doc["PAGE1"];
-    if (PAGE1)
-    {
-      if (!doc["PAGE1"]["TITLE"].isNull())
-      {
-        const char* PAGE1_TITLE = doc["PAGE1"]["TITLE"];
-        Page1Title = String(PAGE1_TITLE);
-      }
-      if (!doc["PAGE1"]["SUBTEXT"].isNull())
-      {
-        const char* PAGE1_SUBTEXT = doc["PAGE1"]["SUBTEXT"];
-        Page1Subtext = String(PAGE1_SUBTEXT);
-      }
-      if (!doc["PAGE1"]["ICON"].isNull())
-      {
-        const char* PAGE1_ICON = doc["PAGE1"]["ICON"];
-        Page1Icon = String(PAGE1_ICON);
-      }
-    }
-
-    JsonObject PAGE2 = doc["PAGE2"];
-    if (PAGE2)
-    {
-      if (!doc["PAGE2"]["TITLE"].isNull())
-      {
-        const char* PAGE2_TITLE = doc["PAGE2"]["TITLE"];
-        Page2Title = String(PAGE2_TITLE);
-      }
-      if (!doc["PAGE2"]["SUBTEXT"].isNull())
-      {
-        const char* PAGE2_SUBTEXT = doc["PAGE2"]["SUBTEXT"];
-        Page2Subtext = String(PAGE2_SUBTEXT);
-      }
-      if (!doc["PAGE2"]["ICON"].isNull())
-      {
-        const char* PAGE2_ICON = doc["PAGE2"]["ICON"];
-        Page2Icon = String(PAGE2_ICON);
-      }
-    }
-
-    JsonObject PAGE3 = doc["PAGE3"];
-    if (PAGE3)
-    {
-      if (!doc["PAGE3"]["TITLE"].isNull())
-      {
-        const char* PAGE3_TITLE = doc["PAGE3"]["TITLE"];
-        Page3Title = String(PAGE3_TITLE);
-      }
-      if (!doc["PAGE3"]["SUBTEXT"].isNull())
-      {
-        const char* PAGE3_SUBTEXT = doc["PAGE3"]["SUBTEXT"];
-        Page3Subtext = String(PAGE3_SUBTEXT);
-      }
-      if (!doc["PAGE3"]["ICON"].isNull())
-      {
-        const char* PAGE3_ICON = doc["PAGE3"]["ICON"];
-        Page3Icon = String(PAGE3_ICON);
-      }
-    }
-
-    JsonObject PAGE4 = doc["PAGE4"];
-    if (PAGE4)
-    {
-      if (!doc["PAGE4"]["TITLE"].isNull())
-      {
-        const char* PAGE4_TITLE = doc["PAGE4"]["TITLE"];
-        Page4Title = String(PAGE4_TITLE);
-      }
-      if (!doc["PAGE4"]["SUBTEXT"].isNull())
-      {
-        const char* PAGE4_SUBTEXT = doc["PAGE4"]["SUBTEXT"];
-        Page4Subtext = String(PAGE4_SUBTEXT);
-      }
-      if (!doc["PAGE4"]["ICON"].isNull())
-      {
-        const char* PAGE4_ICON = doc["PAGE4"]["ICON"];
-        Page4Icon = String(PAGE4_ICON);
-      }
-    }
-
-    JsonObject PAGE5 = doc["PAGE5"];
-    if (PAGE5)
-    {
-      if (!doc["PAGE5"]["TITLE"].isNull())
-      {
-        const char* PAGE5_TITLE = doc["PAGE5"]["TITLE"];
-        Page5Title = String(PAGE5_TITLE);
-      }
-      if (!doc["PAGE5"]["SUBTEXT"].isNull())
-      {
-        const char* PAGE5_SUBTEXT = doc["PAGE5"]["SUBTEXT"];
-        Page5Subtext = String(PAGE5_SUBTEXT);
-      }
-      if (!doc["PAGE5"]["ICON"].isNull())
-      {
-        const char* PAGE5_ICON = doc["PAGE5"]["ICON"];
-        Page5Icon = String(PAGE5_ICON);
-      }
-    }
-
-    Serial.println("PAGE1 Title: " + String(Page1Title) + "\tPAGE1 Subtext: " + String(Page1Subtext) + "\tPAGE1 Icon: " + String(Page1Icon));
-    Serial.println("PAGE2 Title: " + String(Page2Title) + "\tPAGE2 Subtext: " + String(Page2Subtext) + "\tPAGE2 Icon: " + String(Page2Icon));
-    Serial.println("PAGE3 Title: " + String(Page3Title) + "\tPAGE3 Subtext: " + String(Page3Subtext) + "\tPAGE3 Icon: " + String(Page3Icon));
-    Serial.println("PAGE4 Title: " + String(Page4Title) + "\tPAGE4 Subtext: " + String(Page4Subtext) + "\tPAGE4 Icon: " + String(Page4Icon));
-    Serial.println("PAGE5 Title: " + String(Page5Title) + "\tPAGE5 Subtext: " + String(Page5Subtext) + "\tPAGE5 Icon: " + String(Page5Icon));
-  }
-}
-
-void reconnect() {
-  // Loop until we're reconnected
-  //while (!client.connected()) {
-  Serial.print("Attempting MQTT connection...");
-  // Create a random client ID
-  String clientId = "ESP8266Client-";
-  clientId += String(random(0xffff), HEX);
-  // Attempt to connect
-  if (client.connect(clientId.c_str(), mqtt_user, mqtt_password, ("stat/LED_Display_" + getMacAddress() + "/Status").c_str(), will_QoS, will_retain, will_message)) {
-    Serial.println("connected");
-    client.publish(("stat/LED_Display_" + getMacAddress() + "/Status").c_str(), lwt_msg, will_retain);
-    client.subscribe(("cmnd/LED_Display_" + getMacAddress() + "/Colours").c_str());
-    client.subscribe(("cmnd/LED_Display_" + getMacAddress() + "/Display").c_str());
-  } else {
-    Serial.print("failed, rc=");
-    Serial.print(client.state());
-    Serial.println(" try again in 5 seconds");
-    // Wait 5 seconds before retrying
-    delay(5000);
-  }
-  //}
-}
-
 void drawProgress(OLEDDisplay * display, int x, int y, String label, int percentage, String IconType) {
   display->clear();
   drawScreen(display, x, y, "", "", IconType);
@@ -1268,8 +1045,8 @@ void drawScreen(OLEDDisplay * display, int x, int y, String TitleText, String Su
   //display->drawStringMaxWidth(x + 55, y + 20, 70, SubText);
   display->drawString(x + 55, y + 25, SubText);
   int IconInt = FindIconIndex(IconType);
-  //Serial.print("Icon Index: ");
-  //Serial.println(IconInt);
+  //DEBUG_PRINT("Icon Index: ");
+  //DEBUG_PRINTLN(IconInt);
 
   switch (IconInt)
   {
@@ -4807,6 +4584,346 @@ void drawScreen(OLEDDisplay * display, int x, int y, String TitleText, String Su
   }
 }
 
+void connectToWifi() {
+  DEBUG_PRINT("\nConnecting to ");
+  DEBUG_PRINT(WIFI_SSID);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+}
+
+void connectToMqtt() {
+  DEBUG_PRINTLN("Connecting to MQTT...");
+  //mqttClient.setKeepAlive(15).setWill(("stat/LED_Display_" + getMacAddress() + "/Status").c_str(), 0, true, "Offline");
+  mqttClient.setWill(("stat/LED_Display_" + getMacAddress() + "/Status").c_str(), 0, true, LWT_Message);
+  mqttClient.connect();
+}
+
+void onWifiConnect(const WiFiEventStationModeGotIP& event) {
+  DEBUG_PRINTLN("\nConnected to Wi-Fi.");
+  DEBUG_PRINTLN("Device ID: LED_Display_" + String(getMacAddress()));
+  DEBUG_PRINT("IP address: ");
+  DEBUG_PRINTLN(WiFi.localIP());
+  connectToMqtt();
+}
+
+void onWifiDisconnect(const WiFiEventStationModeDisconnected& event) {
+  DEBUG_PRINTLN("Disconnected from Wi-Fi.");
+  mqttReconnectTimer.detach(); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
+  wifiReconnectTimer.once(2, connectToWifi);
+}
+
+void onMqttConnect(bool sessionPresent) {
+  DEBUG_PRINTLN("Connected to MQTT.");
+  mqttClient.subscribe("cmnd/ALL_LED_Display/Colours", 2);
+  mqttClient.publish(("stat/LED_Display_" + getMacAddress() + "/Status").c_str(), 0, false, "Online");
+  mqttClient.subscribe(("cmnd/LED_Display_" + getMacAddress() + "/Colours").c_str(), 0);
+  mqttClient.subscribe(("cmnd/LED_Display_" + getMacAddress() + "/Display").c_str(), 0);
+  mqttClient.subscribe("cmnd/ALL_LED_Display/Colours", 0);
+  mqttClient.subscribe("cmnd/ALL_LED_Display/Display", 0);
+
+}
+
+void onMqttDisconnect(AsyncMqttClientDisconnectReason reason) {
+  DEBUG_PRINTLN("Disconnected from MQTT.");
+
+  if (WiFi.isConnected()) {
+    mqttReconnectTimer.once(2, connectToMqtt);
+  }
+}
+
+void onMqttSubscribe(uint16_t packetId, uint8_t qos) {
+  DEBUG_PRINTLN("Subscribe acknowledged.");
+  //DEBUG_PRINT("  packetId: ");
+  //DEBUG_PRINTLN(packetId);
+}
+
+void onMqttUnsubscribe(uint16_t packetId) {
+  DEBUG_PRINTLN("Unsubscribe acknowledged.");
+}
+
+void onMqttMessage(char* topic, char* payload, AsyncMqttClientMessageProperties properties, size_t length, size_t index, size_t total) {
+
+  UPDATE_PRINT("Message arrived [");
+  UPDATE_PRINT(topic);
+  UPDATE_PRINTLN("]");
+
+  if ((strcmp(topic, ("cmnd/LED_Display_" + getMacAddress() + "/Colours").c_str()) == 0) || ( strcmp(topic, ("cmnd/ALL_LED_Display/Colours")) == 0))
+  {
+    UPDATE_PRINTLN("Updating Colours");
+    StaticJsonDocument<1024> root;
+    deserializeJson(root, payload, length);
+
+    JsonObject L_LED = root["L_LED"];
+    if (L_LED)
+    {
+      if (!root["L_LED"]["H"].isNull())
+      {
+        L_LED_H = map(L_LED["H"], 0, 360, 0, 255); // Hue
+      }
+      if (!root["L_LED"]["S"].isNull())
+      {
+        L_LED_S = map(L_LED["S"], 0, 100, 0, 255); // Sat
+      }
+      if (!root["L_LED"]["V"].isNull())
+      {
+        L_LED_V = map(L_LED["V"], 0, 100, 0, 255); // Val
+      }
+    }
+
+    JsonObject M_LED = root["M_LED"];
+    if (M_LED)
+    {
+      if (!root["M_LED"]["H"].isNull())
+      {
+        M_LED_H = map(M_LED["H"], 0, 360, 0, 255); // Hue
+      }
+      if (!root["M_LED"]["S"].isNull())
+      {
+        M_LED_S = map(M_LED["S"], 0, 100, 0, 255); // Sat
+      }
+      if (!root["M_LED"]["V"].isNull())
+      {
+        M_LED_V = map(M_LED["V"], 0, 100, 0, 255); // Val
+      }
+    }
+
+    JsonObject R_LED = root["R_LED"];
+    if (R_LED)
+    {
+      if (!root["R_LED"]["H"].isNull())
+      {
+        R_LED_H = map(R_LED["H"], 0, 360, 0, 255); // Hue
+      }
+      if (!root["R_LED"]["S"].isNull())
+      {
+        R_LED_S = map(R_LED["S"], 0, 100, 0, 255); // Sat
+      }
+      if (!root["R_LED"]["V"].isNull())
+      {
+        R_LED_V = map(R_LED["V"], 0, 100, 0, 255); // Val
+      }
+    }
+
+    JsonObject STAT_LED = root["STAT_LED"];
+    if (STAT_LED)
+    {
+      if (!root["STAT_LED"]["H"].isNull())
+      {
+        STAT_LED_H = map(STAT_LED["H"], 0, 360, 0, 255); // Hue
+      }
+      if (!root["R_LED"]["S"].isNull())
+      {
+        STAT_LED_S = map(STAT_LED["S"], 0, 100, 0, 255); // Sat
+      }
+      if (!root["STAT_LED"]["V"].isNull())
+      {
+        STAT_LED_V = map(STAT_LED["V"], 0, 100, 0, 255); // Val
+      }
+    }
+
+    JsonObject SCALE_LED = root["SCALE"];
+    if (SCALE_LED)
+    {
+      if (!root["SCALE"]["VAL"].isNull())
+      {
+        if (root["SCALE"]["VAL"].is<int>()) {
+          LINEAR_LED_VAL = root["SCALE"]["VAL"].as<int>();
+        }
+      }
+      if (!root["SCALE"]["DIR"].isNull())
+      {
+        if (root["SCALE"]["DIR"] == "FORWARD" || root["SCALE"]["DIR"] == "LEFT") {
+          LINEAR_LED_DIR = 0;
+        }
+        else if (root["SCALE"]["DIR"] == "BACKWARD" || root["SCALE"]["DIR"] == "RIGHT") {
+          LINEAR_LED_DIR = 1;
+        }
+      }
+    }
+
+    JsonArray FLASHON = root["FLASHON"].as<JsonArray>();
+    for (JsonVariant v : FLASHON) {
+      if (v == "*") {
+        for (int i = 0; i < NUM_LEDS; i++) {
+          FlashArray[i] = true;
+          LED_OFF_Array[i] = false;
+        }
+      }
+      else {
+        UPDATE_PRINTLN(v.as<int>());
+        FlashArray[v.as<int>() - 1] = true;
+        LED_OFF_Array[v.as<int>() - 1] = false; //re-enable LED, if disabled using LEDOFF
+      }
+    }
+
+    JsonArray FLASHOFF = root["FLASHOFF"].as<JsonArray>();
+    for (JsonVariant v : FLASHOFF) {
+      if (v == "*") {
+        for (int i = 0; i < NUM_LEDS; i++) {
+          FlashArray[i] = false;
+        }
+      }
+      else {
+        UPDATE_PRINTLN(v.as<int>());
+        FlashArray[v.as<int>() - 1] = false;
+      }
+    }
+
+    JsonArray LEDON = root["LEDON"].as<JsonArray>();
+    for (JsonVariant v : LEDON) {
+      if (v == "*") {
+        for (int i = 0; i < NUM_LEDS; i++) {
+          FlashArray[i] = false;
+          LED_OFF_Array[i] = false;
+        }
+      }
+      else {
+        UPDATE_PRINTLN(v.as<int>());
+        LED_OFF_Array[v.as<int>() - 1] = false;
+        FlashArray[v.as<int>() - 1] = false;  //remove any flashing parameters from LED
+      }
+    }
+
+    JsonArray LEDOFF = root["LEDOFF"].as<JsonArray>();
+    for (JsonVariant v : LEDOFF) {
+      if (v == "*") {
+        for (int i = 0; i < NUM_LEDS; i++) {
+          LED_OFF_Array[i] = true;
+        }
+      }
+      else {
+        UPDATE_PRINTLN(v.as<int>());
+        LED_OFF_Array[v.as<int>() - 1] = true;
+      }
+    }
+
+    UPDATE_PRINTLN("STAT LED:  " + String(STAT_LED_H) + "\t" + String(STAT_LED_S) + "\t" + String(STAT_LED_V) + "\tFLASH: " + String(FlashArray[20]));
+    UPDATE_PRINTLN("LEFT LED:  " + String(L_LED_H) + "\t" + String(L_LED_S) + "\t" + String(L_LED_V) + "\tFLASH: " + String(FlashArray[0]));
+    UPDATE_PRINTLN("MID LED:   " + String(M_LED_H) + "\t" + String(M_LED_S) + "\t" + String(M_LED_V) + "\tFLASH: " + String(FlashArray[10]));
+    UPDATE_PRINTLN("RIGHT LED: " + String(R_LED_H) + "\t" + String(R_LED_S) + "\t" + String(R_LED_V) + "\tFLASH: " + String(FlashArray[19]));
+    UPDATE_PRINTLN("SCALE: " + String(LINEAR_LED_VAL) + "\t DIR: " + ((LINEAR_LED_DIR == false) ? "LEFT>RIGHT" : "RIGHT>LEFT"));
+  }
+  if ((strcmp(topic, ("cmnd/LED_Display_" + getMacAddress() + "/Display").c_str()) == 0) || ( strcmp(topic, ("cmnd/ALL_LED_Display/Display")) == 0))
+  {
+    UPDATE_PRINTLN("Updating Display");
+    DynamicJsonDocument doc(512);
+    deserializeJson(doc, payload, length);
+
+    JsonObject PAGE1 = doc["PAGE1"];
+    if (PAGE1)
+    {
+      if (!doc["PAGE1"]["TITLE"].isNull())
+      {
+        const char* PAGE1_TITLE = doc["PAGE1"]["TITLE"];
+        Page1Title = String(PAGE1_TITLE);
+      }
+      if (!doc["PAGE1"]["SUBTEXT"].isNull())
+      {
+        const char* PAGE1_SUBTEXT = doc["PAGE1"]["SUBTEXT"];
+        Page1Subtext = String(PAGE1_SUBTEXT);
+      }
+      if (!doc["PAGE1"]["ICON"].isNull())
+      {
+        const char* PAGE1_ICON = doc["PAGE1"]["ICON"];
+        Page1Icon = String(PAGE1_ICON);
+      }
+    }
+
+    JsonObject PAGE2 = doc["PAGE2"];
+    if (PAGE2)
+    {
+      if (!doc["PAGE2"]["TITLE"].isNull())
+      {
+        const char* PAGE2_TITLE = doc["PAGE2"]["TITLE"];
+        Page2Title = String(PAGE2_TITLE);
+      }
+      if (!doc["PAGE2"]["SUBTEXT"].isNull())
+      {
+        const char* PAGE2_SUBTEXT = doc["PAGE2"]["SUBTEXT"];
+        Page2Subtext = String(PAGE2_SUBTEXT);
+      }
+      if (!doc["PAGE2"]["ICON"].isNull())
+      {
+        const char* PAGE2_ICON = doc["PAGE2"]["ICON"];
+        Page2Icon = String(PAGE2_ICON);
+      }
+    }
+
+    JsonObject PAGE3 = doc["PAGE3"];
+    if (PAGE3)
+    {
+      if (!doc["PAGE3"]["TITLE"].isNull())
+      {
+        const char* PAGE3_TITLE = doc["PAGE3"]["TITLE"];
+        Page3Title = String(PAGE3_TITLE);
+      }
+      if (!doc["PAGE3"]["SUBTEXT"].isNull())
+      {
+        const char* PAGE3_SUBTEXT = doc["PAGE3"]["SUBTEXT"];
+        Page3Subtext = String(PAGE3_SUBTEXT);
+      }
+      if (!doc["PAGE3"]["ICON"].isNull())
+      {
+        const char* PAGE3_ICON = doc["PAGE3"]["ICON"];
+        Page3Icon = String(PAGE3_ICON);
+      }
+    }
+
+    JsonObject PAGE4 = doc["PAGE4"];
+    if (PAGE4)
+    {
+      if (!doc["PAGE4"]["TITLE"].isNull())
+      {
+        const char* PAGE4_TITLE = doc["PAGE4"]["TITLE"];
+        Page4Title = String(PAGE4_TITLE);
+      }
+      if (!doc["PAGE4"]["SUBTEXT"].isNull())
+      {
+        const char* PAGE4_SUBTEXT = doc["PAGE4"]["SUBTEXT"];
+        Page4Subtext = String(PAGE4_SUBTEXT);
+      }
+      if (!doc["PAGE4"]["ICON"].isNull())
+      {
+        const char* PAGE4_ICON = doc["PAGE4"]["ICON"];
+        Page4Icon = String(PAGE4_ICON);
+      }
+    }
+
+    JsonObject PAGE5 = doc["PAGE5"];
+    if (PAGE5)
+    {
+      if (!doc["PAGE5"]["TITLE"].isNull())
+      {
+        const char* PAGE5_TITLE = doc["PAGE5"]["TITLE"];
+        Page5Title = String(PAGE5_TITLE);
+      }
+      if (!doc["PAGE5"]["SUBTEXT"].isNull())
+      {
+        const char* PAGE5_SUBTEXT = doc["PAGE5"]["SUBTEXT"];
+        Page5Subtext = String(PAGE5_SUBTEXT);
+      }
+      if (!doc["PAGE5"]["ICON"].isNull())
+      {
+        const char* PAGE5_ICON = doc["PAGE5"]["ICON"];
+        Page5Icon = String(PAGE5_ICON);
+      }
+    }
+
+    UPDATE_PRINTLN("PAGE1 Title: " + String(Page1Title) + "\tPAGE1 Subtext: " + String(Page1Subtext) + "\tPAGE1 Icon: " + String(Page1Icon));
+    UPDATE_PRINTLN("PAGE2 Title: " + String(Page2Title) + "\tPAGE2 Subtext: " + String(Page2Subtext) + "\tPAGE2 Icon: " + String(Page2Icon));
+    UPDATE_PRINTLN("PAGE3 Title: " + String(Page3Title) + "\tPAGE3 Subtext: " + String(Page3Subtext) + "\tPAGE3 Icon: " + String(Page3Icon));
+    UPDATE_PRINTLN("PAGE4 Title: " + String(Page4Title) + "\tPAGE4 Subtext: " + String(Page4Subtext) + "\tPAGE4 Icon: " + String(Page4Icon));
+    UPDATE_PRINTLN("PAGE5 Title: " + String(Page5Title) + "\tPAGE5 Subtext: " + String(Page5Subtext) + "\tPAGE5 Icon: " + String(Page5Icon));
+  }
+}
+
+
+void onMqttPublish(uint16_t packetId) {
+  DEBUG_PRINTLN("Publish acknowledged.");
+  DEBUG_PRINT("  packetId: ");
+  DEBUG_PRINTLN(packetId);
+}
+
 String getMacAddress() {
   byte mac[6];
   byte mac_reversed[6];
@@ -4827,7 +4944,26 @@ String getMacAddress() {
   }
   cMac.toUpperCase();
   return cMac;
+}
 
+void publishSystemStats() {
+  //Uptime Calcs
+  long millisecs = millis();
+  int systemUpTimeSc = int((millisecs / 1000) % 60);
+  int systemUpTimeMn = int((millisecs / (1000 * 60)) % 60);
+  int systemUpTimeHr = int((millisecs / (1000 * 60 * 60)) % 24);
+  int systemUpTimeDy = int((millisecs / (1000 * 60 * 60 * 24)) % 365);
+
+  display.clear();
+  display.setFont(ArialMT_Plain_10);
+  display.setTextAlignment(TEXT_ALIGN_LEFT);
+  display.drawString(0, 0, "Connection Details:");
+  display.drawString(0, 10, "SSID: " + String(WIFI_SSID));
+  display.drawString(0, 20, "DEVICE IP:" + WiFi.localIP().toString());
+  display.drawString(0, 30, "MQTT:" + String(MQTT_HOST));
+
+  display.drawString(0, 50, "Uptime: " + String(systemUpTimeSc) + "S: " + String(systemUpTimeMn) + "M: " + String(systemUpTimeHr) + "H: " + String(systemUpTimeDy) + "D");
+  display.display();
 }
 
 void drawFrame1(OLEDDisplay * display, OLEDDisplayUiState * state, int16_t x, int16_t y) {
@@ -4859,15 +4995,24 @@ FrameCallback frames[] = { drawFrame1, drawFrame2, drawFrame3, drawFrame4, drawF
 int numberOfFrames = 5;
 
 void setup() {
+  pinMode(Key1, INPUT);
+  pinMode (Key2, INPUT);
   Serial.begin(115200);
-  FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);
-  LEDS.setBrightness(255);
+  //FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, NUM_LEDS);
+  FastLED.addLeds<WS2812B, DATA_PIN, GRB>(leds, 0, NUM_LEDS - 1);
+  FastLED.addLeds<WS2812B, STAT_DATA_PIN, GRB>(leds, NUM_LEDS - 1, 1);
 
-  // initialize dispaly
-  display.init();
-  display.clear();
-  display.display();
-  //display.flipScreenVertically();
+  LEDS.setBrightness(255);
+  for (int i = 0; i < NUM_LEDS; i++) {
+    leds[i] = CRGB::Black;
+  }
+  FastLED.show();
+
+
+  display.init();     // initialize display
+  display.clear();    //Clear the display
+  display.display();  //Send this to display
+  display.flipScreenVertically();   //Turn OLED Display upside down
   display.setFont(ArialMT_Plain_16);
   display.setTextAlignment(TEXT_ALIGN_CENTER);
   display.setContrast(255);
@@ -4877,53 +5022,63 @@ void setup() {
   display.display();
   delay(1000);
 
-
-  delay(10);
   // We start by connecting to a WiFi network
-  Serial.print("\nConnecting to ");
-  Serial.println(WIFI_SSID);
 
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PWD);
+  wifiConnectHandler = WiFi.onStationModeGotIP(onWifiConnect);
+  wifiDisconnectHandler = WiFi.onStationModeDisconnected(onWifiDisconnect);
+
+  mqttClient.onConnect(onMqttConnect);
+  mqttClient.onDisconnect(onMqttDisconnect);
+  mqttClient.onSubscribe(onMqttSubscribe);
+  mqttClient.onUnsubscribe(onMqttUnsubscribe);
+  mqttClient.onMessage(onMqttMessage);
+  mqttClient.onPublish(onMqttPublish);
+  mqttClient.setServer(MQTT_HOST, MQTT_PORT);
+
+  connectToWifi();
 
   int counter = 0;
   while (WiFi.status() != WL_CONNECTED) {
-    delay(250);
-    for (int i = 0; i < NUM_LEDS; i++) {
-      leds[i] = CRGB::Black;
-    }
-    FastLED.show();
-    delay(250);
-    Serial.print(".");
-    display.clear();
-    display.drawString(64, 10, "Connecting\nto WiFi");
-    display.drawXbm(46, 30, 8, 8, counter % 3 == 0 ? activeSymbol : inactiveSymbol);
-    display.drawXbm(60, 30, 8, 8, counter % 3 == 1 ? activeSymbol : inactiveSymbol);
-    display.drawXbm(74, 30, 8, 8, counter % 3 == 2 ? activeSymbol : inactiveSymbol);
-    display.display();
-    counter++;
 
-    for (int i = 0; i < NUM_LEDS; i++) {
-      leds[i] = CRGB::Red;
-    }
+    fadeToBlackBy( leds, NUM_LEDS - 1, 20);
+    int pos = beatsin16( 13, 0, NUM_LEDS - 2 );
+    leds[pos] += CHSV( 0, 255, 64);
     FastLED.show();
+    FastLED.delay(1000 / FRAMES_PER_SECOND);
+
+    unsigned long currentMillis = millis();
+
+    if (currentMillis - previousMillis >= 500) {
+      previousMillis = currentMillis;
+
+      DEBUG_PRINT(".");
+      display.clear();
+      display.drawString(60, 10, "WiFi Connecting");
+      display.drawXbm(46, 50, 8, 8, counter % 3 == 0 ? activeSymbol : inactiveSymbol);
+      display.drawXbm(60, 50, 8, 8, counter % 3 == 1 ? activeSymbol : inactiveSymbol);
+      display.drawXbm(74, 50, 8, 8, counter % 3 == 2 ? activeSymbol : inactiveSymbol);
+      display.display();
+      counter++;
+    }
   }
 
-  for (int i = 0; i < NUM_LEDS; i++) {
-    leds[i] = CRGB::Black;
-  }
+  display.clear();
+  fill_solid(leds, NUM_LEDS - 1, CHSV(96, 255, BRIGHTNESS));
   FastLED.show();
+  display.drawString(60, 10, "WiFi Connected!");
+  display.display();
+  delay(1000);
 
+  //Set connection details in the display buffer so that the screen does not flash whilst left key is held during startup.
+
+  while (digitalRead(Key1) == LOW) {
+    publishSystemStats();
+    delay(50);
+  }
+  delay(2000);
+  display.clear();
 
   randomSeed(micros());
-
-  Serial.println("");
-  Serial.println("WiFi connected");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
-
-  client.setServer(mqtt_server, 1883);
-  client.setCallback(callback);
 
   ui.setTargetFPS(30);
   ui.setIndicatorPosition(BOTTOM);
@@ -4931,7 +5086,6 @@ void setup() {
   ui.setFrameAnimation(SLIDE_LEFT);
   ui.setFrames(frames, numberOfFrames);
   ui.init();
-  Serial.println("");
 
   ArduinoOTA.setHostname(("LED_Display_" + getMacAddress()).c_str());
   ArduinoOTA.onStart([]() {
@@ -4943,72 +5097,103 @@ void setup() {
     }
 
     // NOTE: if updating FS this would be the place to unmount FS using FS.end()
-    Serial.println("Start updating " + type);
+    DEBUG_PRINTLN("Start updating " + type);
   });
   ArduinoOTA.onEnd([]() {
-    Serial.println("\nEnd");
+    DEBUG_PRINTLN("\nEnd");
   });
   ArduinoOTA.onProgress([](unsigned int progress, unsigned int total) {
-    Serial.printf("Progress: %u%%\r", (progress / (total / 100)));
+    DEBUG_PRINTF("Progress: %u%%\r", (progress / (total / 100)));
   });
   ArduinoOTA.onError([](ota_error_t error) {
-    Serial.printf("Error[%u]: ", error);
+    DEBUG_PRINTF("Error[%u]: ", error);
     if (error == OTA_AUTH_ERROR) {
-      Serial.println("Auth Failed");
+      DEBUG_PRINTLN("Auth Failed");
     } else if (error == OTA_BEGIN_ERROR) {
-      Serial.println("Begin Failed");
+      DEBUG_PRINTLN("Begin Failed");
     } else if (error == OTA_CONNECT_ERROR) {
-      Serial.println("Connect Failed");
+      DEBUG_PRINTLN("Connect Failed");
     } else if (error == OTA_RECEIVE_ERROR) {
-      Serial.println("Receive Failed");
+      DEBUG_PRINTLN("Receive Failed");
     } else if (error == OTA_END_ERROR) {
-      Serial.println("End Failed");
+      DEBUG_PRINTLN("End Failed");
     }
   });
   ArduinoOTA.begin();
+
+  leds[20] = CHSV(96, 255, 64);
+  FastLED.show();
 }
 
 void loop() {
   ArduinoOTA.handle();
+  display.flipScreenVertically();
   int remainingTimeBudget = ui.update();
 
   if (remainingTimeBudget > 0) {
 
-    if (!client.connected()) {
-      reconnect();
-    }
-    client.loop();
-
-    //    leds[0].setHSV(LED1_H, LED1_S, LED1_V);
-    //    leds[1].setHSV(LED2_H, LED2_S, LED2_V);
-    //    leds[2].setHSV(LED3_H, LED3_S, LED3_V);
-    //    leds[3].setHSV(LED4_H, LED4_S, LED4_V);
-    //    leds[4].setHSV(LED5_H, LED5_S, LED5_V);
-    //
-    //    FastLED.show();
     delay(remainingTimeBudget);
-  }
 
-  unsigned long currentMillis = millis();
+    EVERY_N_MILLISECONDS_I( timingObj, 1) {
+      FLASH_COL = !FLASH_COL;  // toggle FLASH_COL between 0 and 1
 
-  if (currentMillis - previousMillis >= flash_interval) {
-    previousMillis = currentMillis;
+      leds[20] = CHSV(STAT_LED_H, STAT_LED_S, STAT_LED_V);  //Set STAT LED colours / brightness
+      fill_gradient(leds, 20, CHSV(L_LED_H, L_LED_S, L_LED_V), CHSV(M_LED_H, M_LED_S, M_LED_V), CHSV(R_LED_H, R_LED_S, R_LED_V), SHORTEST_HUES);
+      for (int i = 0; i < NUM_LEDS - 1; i++) {
+        if (LINEAR_LED_DIR) { //If direction is defined as Left > Right
+          if (map(LINEAR_LED_VAL - 1, 100, 0, 0, NUM_LEDS) > i + 1) {
+            leds[i] = CRGB::Black;  // Display LEDs, handling scale parameter to use LEDs as a percentage bar (from Left to Right)
+          }
+        }
+        else {                //If direction is defined as Right > Left
+          if (map(LINEAR_LED_VAL - 1, 0, 100, 0, NUM_LEDS) < i + 1) {
+            leds[i] = CRGB::Black;  // Display LEDs, handling scale parameter to use LEDs as a percentage bar (from Right to Left)
+          }
+        }
+      }
 
-    if (flash_on == LOW) {
-      flash_on = HIGH;
-      for (int i = 0; i <= 5; i++) {
-        if (FlashArray[i] == true) {
+      for (int i = 0; i < NUM_LEDS; i++) {//respect LED off tags. remove any colour attributes before showing
+        if (LED_OFF_Array[i] == true) {
           leds[i] = CRGB::Black;
         }
       }
-    } else {
-      flash_on = LOW;
-      leds[4].setHSV(LED1_H, LED1_S, LED1_V);
-      leds[3].setHSV(LED2_H, LED2_S, LED2_V);
-      leds[2].setHSV(LED3_H, LED3_S, LED3_V);
-      leds[1].setHSV(LED4_H, LED4_S, LED4_V);
-      leds[0].setHSV(LED5_H, LED5_S, LED5_V);
+
+      if (FLASH_COL) {
+        timingObj.setPeriod(1000);  // time to display solid before fading
+        FastLED.show();
+      }
+
+      else {
+        timingObj.setPeriod(1000);
+        for (int i = 0; i < NUM_LEDS; i++) {
+          if (FlashArray[i] == true) {
+            leds[i] = CRGB::Black;
+          }
+        }
+        FastLED.show();
+      }
     }
-    FastLED.show();
+
+    if ((digitalRead(Key1) == LOW) && (digitalRead(Key2) == HIGH)) {   //If only the left button is pressed, show the previous frame on the OLED.
+      ui.previousFrame();
+      ui.enableAllIndicators();
+      delay(50);
+    }
+
+    if ((digitalRead(Key1) == HIGH) && (digitalRead(Key2) == LOW)) {   //If only the right button is pressed, show the next frame on the OLED.
+      ui.nextFrame();
+      ui.enableAllIndicators();
+      delay(50);
+    }
+
+    if ((digitalRead(Key1) == LOW) && (digitalRead(Key2) == LOW)) {   //If the both buttons are pressed, show the system stats on the OLED.
+      while ((digitalRead(Key1) == LOW) && (digitalRead(Key2) == LOW)) {
+        publishSystemStats();
+        delay(50);
+      }
+    }
+
+    //if both high, do nothing. This is the default case, both switches are not pressed.
+
   }
 }
